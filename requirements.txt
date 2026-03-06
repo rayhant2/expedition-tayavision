@@ -3,6 +3,7 @@ omegaconf
 wandb
 weave
 torch
+torchvision
 transformers
 datasets
 trl
@@ -19,3 +20,8 @@ lm-eval
 bitsandbytes
 accelerate
 pytest
+ruff
+einops
+numpy
+requests
+tokenizers
