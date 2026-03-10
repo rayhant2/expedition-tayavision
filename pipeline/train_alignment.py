@@ -44,16 +44,13 @@ def train(
     lr_scheduler: torch.optim.lr_scheduler.LRScheduler,
     training_config: AlignmentConfig,
     checkpoint_dir: Path,
-    resume_step: int = 0,
+    step_offset: int = 0,
 ):
     model.train()
     accumulated_loss = 0.0
 
     for epoch in range(training_config.num_epochs):
-        for step, batch in enumerate(dataloader):
-            if step < resume_step:
-                continue
-
+        for step, batch in enumerate(dataloader, start=step_offset):
             input_ids, attention_mask, pixel_values, labels = (
                 batch["input_ids"].to(device),
                 batch["attention_mask"].to(device),
@@ -136,11 +133,32 @@ def main(
 
     model.language_model.gradient_checkpointing_enable()
 
+    resume_step = 0
+    if resume_run_id:
+        ckpt_path = find_latest_checkpoint(checkpoint_dir)
+        if ckpt_path:
+            print(f"Resuming from {ckpt_path}")
+            ckpt = torch.load(ckpt_path, map_location=device)
+            model.multi_modal_projector.load_state_dict(ckpt["projector"])
+            resume_step = ckpt["step"]
+            print(f"Resuming from step {resume_step}")
+        else:
+            print(f"No checkpoints found in {checkpoint_dir}, starting from scratch")
+
     dataset = AlignmentDataset(
         config=model_config,
         dataset_name=training_config.dataset_name,
         data_dir=training_config.data_dir,
     )
+
+    # When resuming, skip already-seen samples so the DataLoader doesn't waste
+    # time loading them. Since data is shuffled, exact sample order doesn't matter.
+    samples_to_skip = resume_step * training_config.batch_size
+    if samples_to_skip > 0 and samples_to_skip < len(dataset):
+        remaining_indices = list(range(samples_to_skip, len(dataset)))
+        dataset = torch.utils.data.Subset(dataset, remaining_indices)
+        print(f"Skipped {samples_to_skip} samples, {len(dataset)} remaining")
+
     loader = torch.utils.data.DataLoader(
         dataset,
         batch_size=training_config.batch_size,
@@ -174,19 +192,9 @@ def main(
     else:
         raise ValueError(f"Unsupported LR scheduler type: {training_config.lr_scheduler_type}")
 
-    resume_step = 0
-    if resume_run_id:
-        ckpt_path = find_latest_checkpoint(checkpoint_dir)
-        if ckpt_path:
-            print(f"Resuming from {ckpt_path}")
-            ckpt = torch.load(ckpt_path, map_location=device)
-            model.multi_modal_projector.load_state_dict(ckpt["projector"])
-            opt.load_state_dict(ckpt["optimizer"])
-            lr_scheduler.load_state_dict(ckpt["lr_scheduler"])
-            resume_step = ckpt["step"]
-            print(f"Resuming from step {resume_step}")
-        else:
-            print(f"No checkpoints found in {checkpoint_dir}, starting from scratch")
+    if resume_step > 0:
+        opt.load_state_dict(ckpt["optimizer"])
+        lr_scheduler.load_state_dict(ckpt["lr_scheduler"])
 
     train(
         model=model,
@@ -195,7 +203,7 @@ def main(
         lr_scheduler=lr_scheduler,
         training_config=training_config,
         checkpoint_dir=checkpoint_dir,
-        resume_step=resume_step,
+        step_offset=resume_step,
     )
 
     wandb.finish()
