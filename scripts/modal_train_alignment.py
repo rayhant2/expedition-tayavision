@@ -26,6 +26,7 @@ image = (
         "numpy",
         "tqdm",
         "einops",
+        "wandb",
     )
     .add_local_dir("config", remote_path="/root/project/config")
     .add_local_dir("src", remote_path="/root/project/src")
@@ -38,7 +39,7 @@ image = (
     image=image,
     gpu="A10G",
     volumes={"/data": volume, "/models": models_volume},
-    secrets=[modal.Secret.from_name("huggingface")],
+    secrets=[modal.Secret.from_name("huggingface"), modal.Secret.from_name("wandb")],
     timeout=3600 * 6,
 )
 def train():

@@ -1,9 +1,10 @@
 import uuid
-
-import torch
-
+from dataclasses import asdict
 from functools import partial
 from pathlib import Path
+
+import torch
+import wandb
 
 from config.training_config import AlignmentConfig
 from config.model_config import TinyAyaVisionConfig
@@ -23,6 +24,7 @@ def train(
     checkpoint_dir: Path,
 ):
     model.train()
+    accumulated_loss = 0.0
 
     for epoch in range(training_config.num_epochs):
         for step, batch in enumerate(dataloader):
@@ -41,12 +43,20 @@ def train(
             )
             loss = outputs.loss / training_config.grad_acc_steps
             loss.backward()
+            accumulated_loss += loss.item()
 
             if (step + 1) % training_config.grad_acc_steps == 0:
-                torch.nn.utils.clip_grad_norm_(model.multi_modal_projector.parameters(), training_config.max_grad_norm)
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.multi_modal_projector.parameters(), training_config.max_grad_norm)
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
+
+                wandb.log({
+                    "train/loss": accumulated_loss,
+                    "train/grad_norm": grad_norm.item(),
+                    "train/lr": lr_scheduler.get_last_lr()[0],
+                }, step=(step + 1) // training_config.grad_acc_steps)
+                accumulated_loss = 0.0
 
             if (step + 1) % training_config.logging_steps == 0:
                 print(f"Epoch {epoch}, Step {step + 1}, Loss {loss.item()}, LR {lr_scheduler.get_last_lr()[0]}")
@@ -70,6 +80,12 @@ def main(
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     print(f"Run UUID: {run_uuid}")
     print(f"Checkpoint dir: {checkpoint_dir}")
+
+    wandb.init(
+        project="tayavision",
+        name=str(run_uuid),
+        config=asdict(training_config),
+    )
 
     model = TinyAyaVisionForConditionalGeneration(
         config=model_config,
@@ -137,6 +153,7 @@ def main(
         checkpoint_dir=checkpoint_dir,
     )
 
+    wandb.finish()
 
 if __name__ == "__main__":
     main(
