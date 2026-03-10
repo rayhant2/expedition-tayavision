@@ -1,3 +1,4 @@
+import re
 import uuid
 from dataclasses import asdict
 from functools import partial
@@ -15,6 +16,27 @@ from src.processing import TinyAyaVisionProcessor
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
+def save_checkpoint(checkpoint_dir, step, model, optimizer, lr_scheduler):
+    save_path = checkpoint_dir / f"checkpoint_{step}.pt"
+    torch.save({
+        "step": step,
+        "projector": model.multi_modal_projector.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "lr_scheduler": lr_scheduler.state_dict(),
+    }, save_path)
+    print(f"Saved checkpoint to {save_path}")
+
+
+def find_latest_checkpoint(checkpoint_dir: Path) -> Path | None:
+    checkpoints = list(checkpoint_dir.glob("checkpoint_*.pt"))
+    if not checkpoints:
+        return None
+    def extract_step(p):
+        m = re.search(r"checkpoint_(\d+)\.pt$", p.name)
+        return int(m.group(1)) if m else -1
+    return max(checkpoints, key=extract_step)
+
+
 def train(
     model: TinyAyaVisionForConditionalGeneration,
     dataloader: torch.utils.data.DataLoader,
@@ -22,12 +44,16 @@ def train(
     lr_scheduler: torch.optim.lr_scheduler.LRScheduler,
     training_config: AlignmentConfig,
     checkpoint_dir: Path,
+    resume_step: int = 0,
 ):
     model.train()
     accumulated_loss = 0.0
 
     for epoch in range(training_config.num_epochs):
         for step, batch in enumerate(dataloader):
+            if step < resume_step:
+                continue
+
             input_ids, attention_mask, pixel_values, labels = (
                 batch["input_ids"].to(device),
                 batch["attention_mask"].to(device),
@@ -62,28 +88,32 @@ def train(
                 print(f"Epoch {epoch}, Step {step + 1}, Loss {loss.item()}, LR {lr_scheduler.get_last_lr()[0]}")
 
             if (step + 1) % training_config.save_steps == 0:
-                save_path = checkpoint_dir / f"projector_{step + 1}.pt"
-                torch.save(model.multi_modal_projector.state_dict(), save_path)
-                print(f"Saved checkpoint to {save_path}")
+                save_checkpoint(checkpoint_dir, step + 1, model, optimizer, lr_scheduler)
 
-    final_path = checkpoint_dir / "projector_final.pt"
-    torch.save(model.multi_modal_projector.state_dict(), final_path)
-    print(f"Saved final checkpoint to {final_path}")
+    save_checkpoint(checkpoint_dir, step + 1, model, optimizer, lr_scheduler)
+    print("Training complete")
 
 
 def main(
     training_config: AlignmentConfig,
     model_config: TinyAyaVisionConfig,
+    resume_run_id: str | None = None,
 ):
-    run_uuid = uuid.uuid4()
-    checkpoint_dir = Path(training_config.models_dir) / str(run_uuid)
+    if resume_run_id:
+        run_id = resume_run_id
+    else:
+        run_id = str(uuid.uuid4())
+
+    checkpoint_dir = Path(training_config.models_dir) / run_id
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Run UUID: {run_uuid}")
+    print(f"Run ID: {run_id}")
     print(f"Checkpoint dir: {checkpoint_dir}")
 
     wandb.init(
         project="tayavision",
-        name=str(run_uuid),
+        name=run_id,
+        id=run_id.replace("-", ""),
+        resume="allow",
         config=asdict(training_config),
     )
 
@@ -143,6 +173,19 @@ def main(
     else:
         raise ValueError(f"Unsupported LR scheduler type: {training_config.lr_scheduler_type}")
 
+    resume_step = 0
+    if resume_run_id:
+        ckpt_path = find_latest_checkpoint(checkpoint_dir)
+        if ckpt_path:
+            print(f"Resuming from {ckpt_path}")
+            ckpt = torch.load(ckpt_path, map_location=device)
+            model.multi_modal_projector.load_state_dict(ckpt["projector"])
+            opt.load_state_dict(ckpt["optimizer"])
+            lr_scheduler.load_state_dict(ckpt["lr_scheduler"])
+            resume_step = ckpt["step"]
+            print(f"Resuming from step {resume_step}")
+        else:
+            print(f"No checkpoints found in {checkpoint_dir}, starting from scratch")
 
     train(
         model=model,
@@ -151,6 +194,7 @@ def main(
         lr_scheduler=lr_scheduler,
         training_config=training_config,
         checkpoint_dir=checkpoint_dir,
+        resume_step=resume_step,
     )
 
     wandb.finish()

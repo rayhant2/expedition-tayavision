@@ -42,7 +42,7 @@ image = (
     secrets=[modal.Secret.from_name("huggingface"), modal.Secret.from_name("wandb")],
     timeout=3600 * 24,
 )
-def train():
+def train(resume_run_id: str | None = None):
     import sys
     sys.path.insert(0, "/root/project")
 
@@ -53,9 +53,10 @@ def train():
     main(
         training_config=AlignmentConfig(),
         model_config=TinyAyaVisionConfig(),
+        resume_run_id=resume_run_id,
     )
 
 
 @app.local_entrypoint()
-def main():
-    train.remote()
+def run(resume_run_id: str = None):
+    train.remote(resume_run_id=resume_run_id)
