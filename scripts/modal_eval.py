@@ -25,7 +25,7 @@ results_volume = modal.Volume.from_name("tayavision-results", create_if_missing=
     secrets=[modal.Secret.from_name("huggingface")],
     timeout=3600 * 4,
 )
-def run_evaluation(task: str, model_name: str, batch_size: str = "auto", log_samples: bool = False):
+def run_evaluation(task: str, model_name: str, batch_size: str = "auto", log_samples: bool = False, apply_chat_template: bool = False, limit: int = None):
     # Setup project environment inside the container
     sys.path.insert(0, "/root/project")
     os.chdir("/root/project")
@@ -51,6 +51,12 @@ def run_evaluation(task: str, model_name: str, batch_size: str = "auto", log_sam
     if log_samples:
         sys.argv.append("--log-samples")
     
+    if apply_chat_template:
+        sys.argv.append("--apply-chat-template")
+        
+    if limit:
+        sys.argv.extend(["--limit", str(limit)])
+    
     print(f"Starting evaluation for task: {task} using model: {model_name}...")
     main()
     
@@ -71,7 +77,7 @@ def run_evaluation(task: str, model_name: str, batch_size: str = "auto", log_sam
 # 3. Running our function locally and remotely
 # The @app.local_entrypoint defines the starting point when we run `modal run scripts/modal_eval.py`
 @app.local_entrypoint()
-def main(task: str, model_name: str = "CohereLabs/tiny-aya-base", batch_size: str = "auto", log_samples: bool = False):
+def main(task: str, model_name: str = "CohereLabs/tiny-aya-base", batch_size: str = "auto", log_samples: bool = False, apply_chat_template: bool = False, limit: int = None):
     
     # We trigger the remote call that runs in the cloud with .remote()
     print("Initializing cloud GPU...")
@@ -79,7 +85,9 @@ def main(task: str, model_name: str = "CohereLabs/tiny-aya-base", batch_size: st
         task=task,
         model_name=model_name,
         batch_size=batch_size,
-        log_samples=log_samples
+        log_samples=log_samples,
+        apply_chat_template=apply_chat_template,
+        limit=limit
     )
     
     # Write the results back to the local results directory

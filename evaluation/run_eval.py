@@ -28,6 +28,7 @@ def main():
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--output-dir", type=str, default="evaluation/results")
     parser.add_argument("--log-samples", action="store_true", help="Log per-question results")
+    parser.add_argument("--apply-chat-template", action="store_true", help="Apply chat template")
     args = parser.parse_args()
 
     logger.info(f"Starting evaluation for task: {args.task}")
@@ -54,6 +55,9 @@ def main():
     
     if args.log_samples:
         cmd.append("--log_samples")
+    
+    if args.apply_chat_template:
+        cmd.append("--apply_chat_template")
     
     try:
         subprocess.run(cmd, check=True)
