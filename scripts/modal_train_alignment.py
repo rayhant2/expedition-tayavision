@@ -6,6 +6,7 @@ Usage:
     modal run --detach scripts/modal_train_alignment.py --vision siglip
     MODAL_GPU=A100-80GB modal run --detach scripts/modal_train_alignment.py --vision moonvit
     modal run --detach scripts/modal_train_alignment.py --resume-run-id <id>
+    modal run --detach scripts/modal_train_alignment.py --llm global --learning-rate 1e-3 --weight-decay 0.01
 """
 
 import os
@@ -54,7 +55,13 @@ image = (
     secrets=[modal.Secret.from_name("huggingface"), modal.Secret.from_name("wandb")],
     timeout=3600 * 24,
 )
-def train(vision: str = "moonvit", llm: str = "base", resume_run_id: str | None = None):
+def train(
+    vision: str = "moonvit",
+    llm: str = "base",
+    resume_run_id: str | None = None,
+    learning_rate: float | None = None,
+    weight_decay: float | None = None,
+):
     import sys
     sys.path.insert(0, "/root/project")
 
@@ -64,6 +71,10 @@ def train(vision: str = "moonvit", llm: str = "base", resume_run_id: str | None 
     overrides = [f"vision={vision}", f"llm={llm}"]
     if resume_run_id:
         overrides.append(f"resume={resume_run_id}")
+    if learning_rate is not None:
+        overrides.append(f"learning_rate={learning_rate}")
+    if weight_decay is not None:
+        overrides.append(f"weight_decay={weight_decay}")
 
     with initialize_config_dir(config_dir="/root/project/config", version_base="1.3"):
         cfg = compose(config_name="config", overrides=overrides)
@@ -71,5 +82,17 @@ def train(vision: str = "moonvit", llm: str = "base", resume_run_id: str | None 
 
 
 @app.local_entrypoint()
-def main(vision: str = "moonvit", llm: str = "base", resume_run_id: str = None):
-    train.remote(vision=vision, llm=llm, resume_run_id=resume_run_id)
+def main(
+    vision: str = "moonvit",
+    llm: str = "base",
+    resume_run_id: str = None,
+    learning_rate: float = None,
+    weight_decay: float = None,
+):
+    train.remote(
+        vision=vision,
+        llm=llm,
+        resume_run_id=resume_run_id,
+        learning_rate=learning_rate,
+        weight_decay=weight_decay,
+    )
