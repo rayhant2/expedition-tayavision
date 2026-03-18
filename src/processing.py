@@ -20,6 +20,22 @@ _MULTIMODAL_CONTENT_RENDER = (
     "{%- endif -%}"
 )
 
+# Jinja2 snippet that replaces {{ message['content'] }} to handle both
+# plain-string content and aya-vision-style list-of-dicts content.
+# Images are rendered first, then text — matching aya-vision's ordering.
+_MULTIMODAL_CONTENT_RENDER = (
+    "{%- if message['content'] is string -%}"
+    "{{ message['content'] }}"
+    "{%- else -%}"
+    "{%- for item in message['content'] | selectattr('type', 'equalto', 'image') -%}"
+    "<image>"
+    "{%- endfor -%}"
+    "{%- for item in message['content'] | selectattr('type', 'equalto', 'text') -%}"
+    "{{ item['text'] }}"
+    "{%- endfor -%}"
+    "{%- endif -%}"
+)
+
 
 class TinyAyaVisionProcessor:
     """Combined processor for Tiny Aya Vision multimodal inputs.
@@ -55,6 +71,44 @@ class TinyAyaVisionProcessor:
             {"additional_special_tokens": [config.image_token]}
         )
         self.image_token_id = self.tokenizer.convert_tokens_to_ids(config.image_token)
+
+        if "base" not in config.llm_model_name:
+            # Patch the chat template so it can render multimodal content
+            self._patch_chat_template()
+
+    # ------------------------------------------------------------------
+    # Chat-template patching
+    # ------------------------------------------------------------------
+
+    def _patch_chat_template(self) -> None:
+        """Replace ``{{ message['content'] }}`` in the tokenizer's chat
+        template with a multimodal-aware renderer so that structured
+        messages (list-of-dicts with type: image / text) are handled
+        exactly the way aya-vision does it.
+        """
+        template = self.tokenizer.chat_template
+        if isinstance(template, dict):
+            template = template.get("default", "")
+        if template is None:
+            raise ValueError(
+                f"Tokenizer for {self.config.llm_model_name!r} has no chat "
+                "template. Use an instruction-tuned model like "
+                "'CohereLabs/tiny-aya-global' via TinyAyaVisionConfig.for_global()."
+            )
+
+        patched = template.replace(
+            "{{ message['content'] }}", _MULTIMODAL_CONTENT_RENDER
+        )
+        self.tokenizer.chat_template = patched
+
+    # ------------------------------------------------------------------
+    # Public helpers
+    # ------------------------------------------------------------------
+
+    @property
+    def chat_template(self) -> str:
+        """Return the (patched) chat template string."""
+        return self.tokenizer.chat_template
 
         if "base" not in config.llm_model_name:
             # Patch the chat template so it can render multimodal content
