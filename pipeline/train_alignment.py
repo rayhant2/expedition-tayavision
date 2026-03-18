@@ -189,7 +189,7 @@ def run(cfg: DictConfig):
         name=run_id,
         id=run_id.replace("-", ""),
         resume="allow",
-        config=asdict(training_config),
+        config={**asdict(training_config), **asdict(model_config)},
     )
 
     model = TinyAyaVisionForConditionalGeneration(
